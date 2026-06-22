@@ -1,0 +1,2 @@
+ALTER TABLE match_directory
+  ADD COLUMN vacancies INTEGER NOT NULL DEFAULT 1;

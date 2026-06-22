@@ -1,0 +1,17 @@
+{
+  "name": "backend",
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy --minify",
+    "cf-typegen": "wrangler types --env-interface CloudflareBindings"
+  },
+  "dependencies": {
+    "@disaster-game/game-core": "workspace:*",
+    "hono": "^4.12.26"
+  },
+  "devDependencies": {
+    "@types/node": "^20.19.43",
+    "wrangler": "^4.4.0"
+  }
+}

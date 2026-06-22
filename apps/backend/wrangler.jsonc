@@ -1,0 +1,26 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "backend",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-06-19",
+  "compatibility_flags": ["nodejs_compat"],
+  "durable_objects": {
+    "bindings": [{ "name": "GAME_MATCH", "class_name": "GameMatch" }],
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["GameMatch"] }],
+  "d1_databases": [
+    {
+      "binding": "MATCH_DIRECTORY",
+      "database_name": "disaster-game-match-directory",
+      "database_id": "7cc732b1-0d84-4bbe-88fc-c881a448a199",
+      "migrations_dir": "migrations",
+    },
+  ],
+  "vars": {
+    "FRONTEND_ORIGIN": "https://frontend.tomop0513-maey.workers.dev",
+  },
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1,
+  },
+}

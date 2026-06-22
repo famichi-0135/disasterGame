@@ -1,0 +1,29 @@
+{
+  "name": "disaster-game",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "private": true,
+  "scripts": {
+    "dev": "pnpm --parallel --filter frontend --filter backend dev",
+    "build": "pnpm -r --if-present run build",
+    "typecheck": "pnpm --filter frontend exec tsc --noEmit",
+    "test": "pnpm --filter @disaster-game/game-core test"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "packageManager": "pnpm@11.8.0",
+  "type": "module",
+  "volta": {
+    "node": "24.13.0"
+  },
+  "engines": {
+    "node": "24.13.0",
+    "pnpm": "11.8.0",
+    "npm": "pnpmを使ってください"
+  },
+  "devDependencies": {
+    "playwright": "1.54.1"
+  }
+}
