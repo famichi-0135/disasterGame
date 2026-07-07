@@ -20,12 +20,17 @@ import {
   type Icon,
 } from "@phosphor-icons/react";
 import {
+  LANES,
   factionLabel,
+  laneLabel,
   phaseLabel,
   type CardInstance,
   type Faction,
+  type Lane,
   type MatchView,
   type PlayerView,
+  type PublicCard,
+  type PublicFieldCard,
 } from "@disaster-game/game-core";
 import { useCallback, useEffect, useState } from "react";
 import {
@@ -52,27 +57,81 @@ const cardIcons: Record<string, Icon> = {
   earthquake: Lightning,
   misinformation: Broadcast,
   downpour: CloudRain,
+  aftershock: Lightning,
+  riverSwelling: CloudRain,
+  rumorBots: Broadcast,
   seawall: Waves,
   evacuation: Siren,
   stockpile: FirstAidKit,
+  furnitureAnchor: ShieldCheck,
+  rainwaterPumps: Waves,
+  seismicRetrofit: ShieldCheck,
+  officialAlert: Radio,
+  disasterInfoAlert: Radio,
 };
+
+const playTypeLabel = (card: PublicCard | CardInstance): string =>
+  card.playType === "ongoingThreat"
+    ? "継続脅威"
+    : card.playType === "defenseUnit"
+      ? "防災ユニット"
+      : "単発";
+
+const cardLaneLabel = (card: PublicCard | CardInstance): string =>
+  card.lane && card.lane !== "general" ? laneLabel(card.lane) : "共通";
+
+const isPublicCard = (value: unknown): value is PublicCard => {
+  if (!value || typeof value !== "object") return false;
+  const card = value as Partial<PublicCard>;
+  return typeof card.name === "string" && typeof card.effect === "object";
+};
+
+const playedCard = (value: unknown): PublicCard | undefined => {
+  if (isPublicCard(value)) return value;
+  if (!value || typeof value !== "object") return undefined;
+  const played = value as { card?: unknown };
+  return isPublicCard(played.card) ? played.card : undefined;
+};
+
+const playedLane = (value: unknown): Lane | undefined => {
+  if (!value || typeof value !== "object") return undefined;
+  const lane = (value as { lane?: unknown }).lane;
+  return lane === "earthquake" || lane === "flood" || lane === "information"
+    ? lane
+    : undefined;
+};
+
+const finiteNumber = (value: unknown, fallback = 0): number =>
+  typeof value === "number" && Number.isFinite(value) ? value : fallback;
+
+type PlayerAction =
+  | { type: "charge"; instanceId: string }
+  | { type: "play"; instanceId: string }
+  | { type: "pass" };
 
 type GameCardProps = {
   card: CardInstance;
   faction: Faction;
-  disabled: boolean;
+  playDisabled: boolean;
+  chargeDisabled: boolean;
   onPlay: (card: CardInstance) => void;
+  onCharge: (card: CardInstance) => void;
 };
 
-function GameCard({ card, faction, disabled, onPlay }: GameCardProps) {
+function GameCard({
+  card,
+  faction,
+  playDisabled,
+  chargeDisabled,
+  onPlay,
+  onCharge,
+}: GameCardProps) {
   const CardIcon = cardIcons[card.id] ?? Target;
+  const isFullyDisabled = playDisabled && chargeDisabled;
   return (
-    <button
-      type="button"
-      className={`game-card ${faction === "dark" ? "threat-card" : "response-card"}`}
-      disabled={disabled}
-      onClick={() => onPlay(card)}
-      aria-label={`${card.name}をプレイ`}
+    <article
+      className={`game-card ${isFullyDisabled ? "is-disabled" : ""} ${faction === "dark" ? "threat-card" : "response-card"}`}
+      aria-label={card.name}
     >
       <span className="card-cost">
         {card.cost}
@@ -87,11 +146,33 @@ function GameCard({ card, faction, disabled, onPlay }: GameCardProps) {
               ? "対策"
               : "啓発"}
       </span>
+      <span className="card-meta">
+        {cardLaneLabel(card)} / {playTypeLabel(card)}
+      </span>
       <CardIcon className="card-icon" weight="duotone" aria-hidden="true" />
       <strong>{card.name}</strong>
       <span className="card-summary">{card.summary}</span>
       <span className="card-tip-label">防災Tipsあり</span>
-    </button>
+      <div className="card-actions">
+        <button
+          type="button"
+          disabled={playDisabled}
+          onClick={() => onPlay(card)}
+          aria-label={`${card.name}をプレイ`}
+        >
+          プレイ
+        </button>
+        <button
+          type="button"
+          disabled={chargeDisabled}
+          onClick={() => onCharge(card)}
+          aria-label={`${card.name}を基盤化`}
+          title="手札1枚を基盤に送り、次ターン以降のリソース回復を+1します。各ターン1回まで。"
+        >
+          基盤化 +1
+        </button>
+      </div>
+    </article>
   );
 }
 
@@ -104,13 +185,12 @@ function PlayerArea({
   view: MatchView;
   faction: Faction;
   submitting: boolean;
-  onAction: (
-    action: { type: "play"; instanceId: string } | { type: "pass" },
-  ) => void;
+  onAction: (action: PlayerAction) => void;
 }) {
   const player: PlayerView = faction === "dark" ? view.dark : view.government;
   const isOwner = view.role === faction;
   const isActive = isOwner && view.canAct;
+  const canCharge = isOwner && (view.canCharge ?? view.canAct);
   const title = faction === "dark" ? "闇の組織" : "日本政府";
   const resourceName = faction === "dark" ? "CP" : "予算";
   const PlayerIcon = faction === "dark" ? WarningCircle : Bank;
@@ -142,8 +222,19 @@ function PlayerArea({
             ? `手札 ${player.handCount}枚`
             : `相手の手札 ${player.handCount}枚`}
         </span>
-        <span>山札 {player.deckCount}</span>
+        <span>
+          山札 {player.deckCount} / 基盤 {player.foundationCount} / 次回回復 +{player.nextRecovery}
+        </span>
       </div>
+      {isOwner && (
+        <p className="foundation-hint">
+          {canCharge
+            ? "基盤化: 自分のフェイズ中に1枚まで。次ターン以降の回復+1。"
+            : isActive
+              ? "このターンは基盤化済みです。"
+              : "基盤化は自分のフェイズ中に使えます。"}
+        </p>
+      )}
       {isOwner ? (
         <div className="card-hand">
           {hand.map((card) => (
@@ -151,9 +242,13 @@ function PlayerArea({
               key={card.instanceId}
               card={card}
               faction={faction}
-              disabled={!isActive || submitting || player.resource < card.cost}
+              playDisabled={!isActive || submitting || player.resource < card.cost}
+              chargeDisabled={!canCharge || submitting}
               onPlay={(nextCard) =>
                 onAction({ type: "play", instanceId: nextCard.instanceId })
+              }
+              onCharge={(nextCard) =>
+                onAction({ type: "charge", instanceId: nextCard.instanceId })
               }
             />
           ))}
@@ -163,7 +258,7 @@ function PlayerArea({
           <ShieldCheck size={34} weight="duotone" />
           <strong>相手の手札は非公開です</strong>
           <span>
-            残り {player.handCount} 枚 / 捨札 {player.discardCount} 枚
+            残り {player.handCount} 枚 / 捨札 {player.discardCount} 枚 / 基盤 {player.foundationCount} 枚 / 次回回復 +{player.nextRecovery}
           </span>
         </div>
       )}
@@ -181,6 +276,129 @@ function PlayerArea({
             : "相手のエリア"}
       </button>
     </section>
+  );
+}
+
+function LaneCardList({
+  cards,
+  emptyLabel,
+}: {
+  cards: PublicFieldCard[];
+  emptyLabel: string;
+}) {
+  if (cards.length === 0) {
+    return <span className="lane-empty">{emptyLabel}</span>;
+  }
+
+  return (
+    <div className="lane-card-stack">
+      {cards.map((card, index) => (
+        <span
+          key={`${card.owner}-${card.id}-${index}`}
+          className={card.ready ? "lane-card-ready" : "lane-card-waiting"}
+        >
+          {card.name}
+          <small>{card.ready ? "ready" : "準備中"}</small>
+        </span>
+      ))}
+    </div>
+  );
+}
+
+function LaneBoard({ view }: { view: MatchView }) {
+  const pendingResponseCard = playedCard(view.pendingResponse);
+  const pendingResponseLane = playedLane(view.pendingResponse);
+  const commonResponse =
+    pendingResponseCard && !pendingResponseLane
+      ? pendingResponseCard
+      : undefined;
+
+  return (
+    <section className="lane-board" aria-label="現場レーン">
+      <div className="lane-board-heading">
+        <span>現場レーン</span>
+        <small>継続カードは次ターンから有効</small>
+      </div>
+      {LANES.map((lane: Lane) => {
+        const laneState = view.field?.lanes?.[lane] ?? {
+          threats: [],
+          defenses: [],
+        };
+        const pendingThreatCard = playedCard(view.pendingThreat);
+        const pendingThreatLane = playedLane(view.pendingThreat);
+        const pendingThreat =
+          pendingThreatLane === lane ? pendingThreatCard : undefined;
+        const pendingResponse =
+          pendingResponseLane === lane ? pendingResponseCard : undefined;
+
+        return (
+          <div className="lane-row" key={lane}>
+            <strong>{laneLabel(lane)}</strong>
+            <div>
+              <span className="lane-side-title">脅威</span>
+              {pendingThreat ? (
+                <b className="lane-pending danger-text">{pendingThreat.name}</b>
+              ) : (
+                <LaneCardList
+                  cards={laneState.threats}
+                  emptyLabel="継続脅威なし"
+                />
+              )}
+            </div>
+            <div>
+              <span className="lane-side-title">対応</span>
+              {pendingResponse ? (
+                <b className="lane-pending safety-text">
+                  {pendingResponse.name}
+                </b>
+              ) : (
+                <LaneCardList
+                  cards={laneState.defenses}
+                  emptyLabel="防災ユニットなし"
+                />
+              )}
+            </div>
+          </div>
+        );
+      })}
+      {commonResponse && (
+        <p className="common-response">
+          共通対応: <strong>{commonResponse.name}</strong>
+        </p>
+      )}
+    </section>
+  );
+}
+
+function PlayedSummaryPanel({
+  title,
+  tone,
+  card,
+  fallback,
+  icon: FallbackIcon,
+}: {
+  title: string;
+  tone: "dark" | "government";
+  card?: PublicCard;
+  fallback: string;
+  icon: Icon;
+}) {
+  const CardIcon = card ? (cardIcons[card.id] ?? Target) : FallbackIcon;
+
+  return (
+    <div className={tone === "dark" ? "played-card-panel" : "response-card-panel"}>
+      <span className={tone === "dark" ? "eyebrow" : "eyebrow safety-eyebrow"}>
+        {title}
+      </span>
+      <CardIcon size={48} weight="duotone" aria-hidden="true" />
+      <strong>{card?.name ?? "未選択"}</strong>
+      <p>{card?.summary ?? fallback}</p>
+      {card && (
+        <span className="played-card-meta">
+          {cardLaneLabel(card)} / {playTypeLabel(card)}
+        </span>
+      )}
+    </div>
   );
 }
 
@@ -381,9 +599,7 @@ export function DisasterGame() {
     }
   };
 
-  const handleAction = async (
-    action: { type: "play"; instanceId: string } | { type: "pass" },
-  ) => {
+  const handleAction = async (action: PlayerAction) => {
     if (!session) return;
     setBusy(true);
     try {
@@ -431,17 +647,30 @@ export function DisasterGame() {
 
   if (!view || !session) return null;
 
-  const activeCard = view.pendingResponse ?? view.pendingThreat;
-  const ActiveIcon = activeCard
-    ? (cardIcons[activeCard.id] ?? Target)
-    : FlagBanner;
-  const responseCard = view.pendingResponse;
-  const ResponseIcon = responseCard
-    ? (cardIcons[responseCard.id] ?? ShieldCheck)
-    : ShieldCheck;
+  const threatCard = playedCard(view.pendingThreat);
+  const responseCard = playedCard(view.pendingResponse);
+  const revealedShields = view.revealedShields ?? [];
+  const shieldCount = view.shieldCount ?? 0;
+  const activityLog = view.log ?? [];
+  const currentTips = view.activeTips ?? [];
+  const lastResolution = view.lastResolution as
+    | (NonNullable<MatchView["lastResolution"]> & Record<string, unknown>)
+    | undefined;
+  const lastResolutionNumber = (key: string, fallback = 0): number =>
+    lastResolution ? finiteNumber(lastResolution[key], fallback) : fallback;
+  const rawDamage = lastResolution
+    ? lastResolutionNumber("rawDamage", threatCard?.effect?.damage ?? 0)
+    : (threatCard?.effect?.damage ?? 0);
+  const remainingDamageBeforeShield = lastResolution
+    ? lastResolutionNumber(
+        "remainingDamageBeforeShield",
+        lastResolutionNumber("remainingDamage", rawDamage),
+      )
+    : undefined;
+  const shieldAbsorbed = lastResolutionNumber("shieldAbsorbed");
   const activeTips =
-    view.activeTips.length > 0
-      ? view.activeTips
+    currentTips.length > 0
+      ? currentTips
       : [
           {
             cardName: "防災の基本",
@@ -531,14 +760,21 @@ export function DisasterGame() {
         </section>
 
         <section className="resolution-zone">
-          <div className="played-card-panel">
-            <span className="eyebrow">現在の脅威</span>
-            <ActiveIcon size={48} weight="duotone" />
-            <strong>{activeCard?.name ?? "カードの選択を待っています"}</strong>
-            <p>
-              {activeCard?.summary ??
-                "闇の組織がカードをプレイすると、政府が対応を選択できます。"}
-            </p>
+          <div className="played-card-stack">
+            <PlayedSummaryPanel
+              title="現在の脅威"
+              tone="dark"
+              card={threatCard}
+              fallback="闇の組織がカードをプレイすると、政府が対応を選択できます。"
+              icon={FlagBanner}
+            />
+            <PlayedSummaryPanel
+              title="政府の対応"
+              tone="government"
+              card={responseCard}
+              fallback="政府フェイズで対応カード、啓発カード、防災ユニットを選択します。"
+              icon={ShieldCheck}
+            />
           </div>
           <div className="resolution-main">
             <div className="resolution-title">
@@ -547,33 +783,103 @@ export function DisasterGame() {
             <div className="resolution-values">
               <div>
                 <span>基礎威力</span>
-                <strong>
-                  {view.lastResolution?.rawDamage ??
-                    view.pendingThreat?.effect.damage ??
-                    0}
+                <strong>{rawDamage}</strong>
+              </div>
+              <div>
+                <span>シールド前</span>
+                <strong className="danger-text">
+                  {remainingDamageBeforeShield ?? "-"}
                 </strong>
               </div>
               <div>
-                <span>残余被害</span>
+                <span>ゲージ被害</span>
                 <strong className="danger-text">
-                  {view.lastResolution?.remainingDamage ?? "-"}
+                  {lastResolution
+                    ? `+${lastResolutionNumber("damageToGauge", lastResolutionNumber("remainingDamage"))}`
+                    : "-"}
                 </strong>
               </div>
               <div>
                 <span>対策獲得</span>
                 <strong className="safety-text">
-                  {view.lastResolution
-                    ? `+${view.lastResolution.countermeasureGain}`
+                  {lastResolution
+                    ? `+${lastResolutionNumber("countermeasureGain")}`
                     : "-"}
                 </strong>
               </div>
             </div>
+            {lastResolution && (
+              <div className="resolution-breakdown" aria-label="判定内訳">
+                <div>
+                  <span>継続威力</span>
+                  <strong className="danger-text">
+                    +{lastResolutionNumber("persistentDamage")}
+                  </strong>
+                </div>
+                <div>
+                  <span>通常軽減</span>
+                  <strong className="safety-text">
+                    -{lastResolutionNumber("mitigation")}
+                  </strong>
+                </div>
+                <div>
+                  <span>緊急軽減</span>
+                  <strong className="safety-text">
+                    -{lastResolutionNumber("triggerMitigation")}
+                  </strong>
+                </div>
+                <div>
+                  <span>シールド吸収</span>
+                  <strong className="safety-text">
+                    -{shieldAbsorbed}
+                  </strong>
+                </div>
+                <p
+                  className={
+                    lastResolution.responseLane &&
+                    !lastResolution.responseMatched
+                      ? "resolution-note is-mismatch"
+                      : "resolution-note"
+                  }
+                >
+                  {lastResolution.responseLane &&
+                  lastResolution.threatLane
+                    ? lastResolution.responseMatched
+                      ? `${laneLabel(lastResolution.responseLane)}で対応が一致しました。`
+                      : `${laneLabel(lastResolution.responseLane)}の対応は、${laneLabel(lastResolution.threatLane)}の脅威には通常軽減として入りません。`
+                    : "共通対応またはレーン外効果として処理されました。"}
+                </p>
+              </div>
+            )}
+            <div className="shield-status" aria-label="防災シールド">
+              <div>
+                <span>防災シールド</span>
+                <strong>{shieldCount}枚</strong>
+              </div>
+              <div className="shield-dots" aria-hidden="true">
+                {Array.from({ length: Math.max(shieldCount, 0) }).map(
+                  (_, index) => (
+                    <i key={index} />
+                  ),
+                )}
+              </div>
+              <p>
+                {lastResolution?.revealedShield
+                  ? `公開: ${lastResolution.revealedShield.name} / 吸収 ${shieldAbsorbed}`
+                  : revealedShields.length > 0
+                    ? `直近公開: ${revealedShields[0].name}`
+                    : "被害が通ると1枚公開され、被害を半減します。"}
+              </p>
+            </div>
+            <LaneBoard view={view} />
             <p className="phase-prompt">
               {view.phase === "ended"
                 ? "ゲームは終了しました。"
                 : view.canAct
                   ? "あなたが操作中です。"
-                  : `${factionLabel(view.phase === "government" ? "government" : "dark")}が操作中です。`}
+                  : view.phase === "resolution"
+                    ? "判定処理中です。"
+                    : `${factionLabel(view.phase === "government" ? "government" : "dark")}が操作中です。`}
             </p>
           </div>
           <aside className="tips-panel">
@@ -614,7 +920,7 @@ export function DisasterGame() {
             <Radio size={18} weight="fill" /> アクティビティログ
           </div>
           <div className="log-items">
-            {view.log.slice(0, 4).map((entry) => (
+            {activityLog.slice(0, 4).map((entry) => (
               <span
                 key={`${entry.id}+${entry.tone}`}
                 className={`log-${entry.tone}`}

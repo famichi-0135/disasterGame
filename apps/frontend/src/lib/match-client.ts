@@ -1,4 +1,4 @@
-import type { Faction, MatchView } from "@disaster-game/game-core";
+import type { Faction, Lane, MatchView } from "@disaster-game/game-core";
 import type { MatchSession } from "./match-session";
 
 const apiBase = (process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8787").replace(/\/$/, "");
@@ -60,7 +60,10 @@ export const getMatchState = (session: MatchSession): Promise<MatchSnapshot> =>
 
 export const sendMatchAction = (
 	session: MatchSession,
-	action: { type: "play"; instanceId: string } | { type: "pass" },
+	action:
+		| { type: "charge"; instanceId: string }
+		| { type: "play"; instanceId: string; lane?: Lane }
+		| { type: "pass" },
 ): Promise<MatchSnapshot> =>
 	request<MatchSnapshot>(
 		`/api/matches/${encodeURIComponent(session.matchId)}/actions`,

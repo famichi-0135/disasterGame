@@ -8,7 +8,8 @@
     "dev": "pnpm --parallel --filter frontend --filter backend dev",
     "build": "pnpm -r --if-present run build",
     "typecheck": "pnpm --filter frontend exec tsc --noEmit",
-    "test": "pnpm --filter @disaster-game/game-core test"
+    "test": "pnpm --filter @disaster-game/game-core test",
+    "test:e2e": "playwright test"
   },
   "keywords": [],
   "author": "",

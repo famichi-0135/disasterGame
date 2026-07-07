@@ -1,18 +1,23 @@
 import { DurableObject } from "cloudflare:workers";
 import {
     createInitialGameState,
+    normalizeGameState,
     toMatchView,
     transition,
     type Faction,
     type GameAction,
     type GameState,
+    type Lane,
     type MatchView,
 } from "@disaster-game/game-core";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 
 type PlayerRole = Faction;
-type ClientAction = { type: "play"; instanceId: string } | { type: "pass" };
+type ClientAction =
+    | { type: "charge"; instanceId: string }
+    | { type: "play"; instanceId: string; lane?: Lane }
+    | { type: "pass" };
 
 type MatchSnapshot = {
     role: PlayerRole;
@@ -248,10 +253,7 @@ export class GameMatch extends DurableObject<CloudflareBindings> {
             .exec<StateRow>("SELECT payload FROM game_state WHERE id = 1")
             .toArray()[0];
         if (!row) return undefined;
-        const parsed = JSON.parse(row.payload) as GameState & {
-            revision?: number;
-        };
-        return { ...parsed, revision: parsed.revision ?? 0 };
+        return normalizeGameState(JSON.parse(row.payload));
     }
 
     private requireState(): GameState {
@@ -456,7 +458,18 @@ export class GameMatch extends DurableObject<CloudflareBindings> {
 
     private toGameAction(role: PlayerRole, action: ClientAction): GameAction {
         if (action.type === "pass") return { type: "pass", faction: role };
-        return { type: "play", faction: role, instanceId: action.instanceId };
+        if (action.type === "charge")
+            return {
+                type: "charge",
+                faction: role,
+                instanceId: action.instanceId,
+            };
+        return {
+            type: "play",
+            faction: role,
+            instanceId: action.instanceId,
+            lane: action.lane,
+        };
     }
 
     private snapshot(state: GameState, role: PlayerRole): MatchSnapshot {
@@ -635,10 +648,20 @@ const setDirectoryStatus = async (
 
 const parseClientAction = (value: unknown): ClientAction | undefined => {
     if (!value || typeof value !== "object") return undefined;
-    const action = value as { type?: unknown; instanceId?: unknown };
+    const action = value as { type?: unknown; instanceId?: unknown; lane?: unknown };
     if (action.type === "pass") return { type: "pass" };
+    if (action.type === "charge" && typeof action.instanceId === "string") {
+        return { type: "charge", instanceId: action.instanceId };
+    }
     if (action.type === "play" && typeof action.instanceId === "string") {
-        return { type: "play", instanceId: action.instanceId };
+        if (action.lane !== undefined && !isLane(action.lane)) return undefined;
+        const lane =
+            action.lane === "earthquake" ||
+            action.lane === "flood" ||
+            action.lane === "information"
+                ? action.lane
+                : undefined;
+        return { type: "play", instanceId: action.instanceId, lane };
     }
     return undefined;
 };
@@ -652,6 +675,8 @@ const opponentOf = (role: PlayerRole): PlayerRole =>
     role === "dark" ? "government" : "dark";
 const isPlayerRole = (value: unknown): value is PlayerRole =>
     value === "dark" || value === "government";
+const isLane = (value: unknown): value is Lane =>
+    value === "earthquake" || value === "flood" || value === "information";
 
 const hashToken = async (token: string): Promise<string> => {
     const digest = await crypto.subtle.digest(
